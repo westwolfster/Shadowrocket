@@ -1,40 +1,32 @@
 /**
- * 订阅级高级脚本：将传入的机场节点流直接洗净并手搓组装成小火箭 .conf 纯文本
- * 适用场景：Sub-store「订阅管理」-> 类型选「Mihomo 配置」-> 来源选你的机场 -> 挂载此脚本
+ * 订阅级高级脚本（纯文本输出修正版）
+ * 适用场景：Sub-store「订阅管理」-> 类型选「文件」或「文本」-> 来源选你的机场 -> 挂载此脚本
  */
 function operator(proxies = [], targetPlatform, context) {
-  // 1. 健壮性检查：如果在单条订阅流中没有获取到节点，直接安全退出
   if (!proxies || proxies.length === 0) {
-    console.log("[小火箭重组] 警告：没有接收到任何传入的节点，请检查上游机场订阅是否正常。");
-    return proxies;
+    console.log("[小火箭重组] 错误：未接收到节点流");
+    return "error: no proxies received";
   }
 
-  console.log(`[小火箭重组] 成功接收到单条订阅传入的实体节点共计: ${proxies.length} 个`);
+  console.log(`[小火箭重组] 成功接收节点共计: ${proxies.length} 个`);
 
-  // 2. 节点清洗与国别分类容器
   let proxyLines = [];
   const hkNodes = [], sgNodes = [], jpNodes = [], krNodes = [], usNodes = [], otherNodes = [], allNodeTags = [];
   
-  // 国别关键字匹配规则
   const REGEX_HK = /(香港|HK|Hong Kong|HongKong|Hkg)/i;
   const REGEX_SG = /(新加坡|SG|Singapore|Sgp)/i;
   const REGEX_JP = /(日本|JP|Japan|东京|大阪|Jpn)/i;
   const REGEX_KR = /(韩国|KR|Korea|首尔|Kor)/i;
   const REGEX_US = /(美国|US|United States|America|Usa)/i;
 
-  // 3. 遍历 Sub-store 传给我们的基础节点流
   proxies.forEach(p => {
     if (!p || !p.tag) return;
-
-    // 利用 Sub-store 内置的 PROXY 工具箱，将节点对象序列化为小火箭标准的明文行
-    // 类似渲染出：🇯🇵 日本原生 = ss, 1.2.3.4, 443, ...
+    // 调用内置序列化，将节点对象变成小火箭单行标准明文
     let shadowrocketLine = SubStore.Script.Util.PROXY.stringify(p, "shadowrocket");
-    
     if (shadowrocketLine) {
       proxyLines.push(shadowrocketLine);
       allNodeTags.push(p.tag);
 
-      // 精准划分国别标签池（策略组用）
       if (REGEX_HK.test(p.tag)) hkNodes.push(p.tag);
       else if (REGEX_SG.test(p.tag)) sgNodes.push(p.tag);
       else if (REGEX_JP.test(p.tag)) jpNodes.push(p.tag);
@@ -44,10 +36,9 @@ function operator(proxies = [], targetPlatform, context) {
     }
   });
 
-  // 4. 辅助函数：格式化策略组节点，如果为空则用 DIRECT 兜底
   const cleanG = (nodes) => nodes.length > 0 ? nodes.join(", ") : "DIRECT";
 
-  // 5. 1:1 用纯文本手搓组装出小火箭的 `.conf` 配置文件内容
+  // 手搓组装小火箭标准的 .conf 文本内容
   let finalConf = `[General]
 dns-server = 223.5.5.5, 8.8.8.8
 fallback-dns-server = 8.8.8.8
@@ -151,9 +142,10 @@ GEOIP,CN,DIRECT
 FINAL,Proxy
 `;
 
-  // 6. 【最核心的一步】直接接管 Sub-store 本次的全局输出文本，强行覆写为小火箭格式
-  $content = finalConf;
-
-  // 依然返回原始代理给底层流水线，但 $content 已经被我们牢牢定死
-  return proxies;
+  // 同时支持两种底层的文本接管机制，确保绝不漏网
+  if (typeof $content !== 'undefined') {
+    $content = finalConf;
+  }
+  
+  return finalConf;
 }
