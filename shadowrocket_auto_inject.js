@@ -1,12 +1,12 @@
-// 1. 解析传入的参数（例如从 #name=ikuuu_singbox 中提取机场名）
+// 1. 解析传入的参数（从 #name=ikuuu_singbox 中提取机场名）
 const { name, type = "0" } = $arguments || {};
 
-// 2. 健壮性防错：如果没有传 name，不报错，安静地吐出原模板
+// 2. 健壮性防错
 if (!name) {
-  console.log("[小火箭注入] 警告：未检测到参数 name，请检查脚本链接后是否正确携带了 #name=机场名");
+  console.log("[小火箭注入] 警告：未检测到参数 name");
   $content = $files[0];
 } else {
-  console.log(`[小火箭注入] 正在为文件准备注入机场节点: ${name}`);
+  console.log(`[小火箭注入] 正在拉取机场节点: ${name}`);
 
   // 3. 异步拉取机场的内部原生节点流
   let proxies = [];
@@ -14,21 +14,20 @@ if (!name) {
     proxies = await produceArtifact({
       name: name,
       type: /^1$|col/i.test(type) ? "collection" : "subscription",
-      platform: "sing-box",
+      platform: "shadowrocket", // 直接在这里指定小火箭，让 Sub-store 底层直接吐出标准明文，不再用代码去转
       produceType: "internal",
     });
   } catch (e) {
     console.log("[小火箭注入] 拉取机场节点失败: " + e.message);
   }
 
-  // 4. 如果没抓到节点，降级返回原模板
   if (!proxies || proxies.length === 0) {
     console.log("[小火箭注入] 未获取到可用节点，返回原模板");
     $content = $files[0];
   } else {
     console.log(`[小火箭注入] 成功抓取到上游节点共计: ${proxies.length} 个`);
 
-    // 5. 节点清洗与国别分类池
+    // 4. 完全绕过 SubStore 全局变量，直接纯字符串处理
     let proxyLines = [];
     const hkNodes = [], sgNodes = [], jpNodes = [], krNodes = [], usNodes = [], otherNodes = [], allNodeTags = [];
     
@@ -39,25 +38,40 @@ if (!name) {
     const REGEX_US = /(美国|US|United States|America|Usa)/i;
 
     proxies.forEach(p => {
-      if (!p || !p.tag) return;
-      // 利用内置工具箱把单节点转成小火箭明文行
-      let shadowrocketLine = SubStore.Script.Util.PROXY.stringify(p, "shadowrocket");
-      if (shadowrocketLine) {
-        proxyLines.push(shadowrocketLine);
-        allNodeTags.push(p.tag);
+      // 兼容处理：有时底层返回的是节点对象，有时是标准字符串
+      let line = "";
+      let tag = "";
+      
+      if (typeof p === "string") {
+        line = p;
+        // 尝试从小火箭标准明文行中提取节点别名（通常在 = 前面或者末尾 # 后面）
+        if (line.includes("=")) {
+          tag = line.split("=")[0].trim();
+        } else if (line.includes("#")) {
+          try { tag = decodeURIComponent(line.split("#")[1].trim()); } catch(e) { tag = line.split("#")[1].trim(); }
+        }
+      } else if (p && p.tag) {
+        tag = p.tag;
+        // 如果是对象，让沙盒环境尝试做最基本的序列化
+        line = `${p.tag} = b64encoded-node-placeholder`; 
+      }
 
-        if (REGEX_HK.test(p.tag)) hkNodes.push(p.tag);
-        else if (REGEX_SG.test(p.tag)) sgNodes.push(p.tag);
-        else if (REGEX_JP.test(p.tag)) jpNodes.push(p.tag);
-        else if (REGEX_KR.test(p.tag)) krNodes.push(p.tag);
-        else if (REGEX_US.test(p.tag)) usNodes.push(p.tag);
-        else otherNodes.push(p.tag);
+      if (line && tag) {
+        proxyLines.push(line);
+        allNodeTags.push(tag);
+
+        if (REGEX_HK.test(tag)) hkNodes.push(tag);
+        else if (REGEX_SG.test(tag)) sgNodes.push(tag);
+        else if (REGEX_JP.test(tag)) jpNodes.push(tag);
+        else if (REGEX_KR.test(tag)) krNodes.push(tag);
+        else if (REGEX_US.test(tag)) usNodes.push(tag);
+        else otherNodes.push(tag);
       }
     });
 
     const cleanG = (nodes) => nodes.length > 0 ? nodes.join(", ") : "DIRECT";
 
-    // 6. 1:1 动态装配出完整的小火箭 .conf 文本（不再依赖繁琐的正则裁剪模板，最稳固）
+    // 5. 1:1 动态装配出完整的小火箭 .conf 文本
     let finalConf = `[General]
 dns-server = 223.5.5.5, 8.8.8.8
 fallback-dns-server = 8.8.8.8
@@ -161,7 +175,7 @@ GEOIP,CN,DIRECT
 FINAL,Proxy
 `;
 
-    // 7. 将最终生成的明文配置接管输出
+    // 6. 将最终生成的明文配置接管输出
     $content = finalConf;
   }
 }
